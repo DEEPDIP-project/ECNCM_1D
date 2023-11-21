@@ -3,6 +3,34 @@ using SparseArrays
 using Random
 using Distributions
 
+"""
+General type for triples of types, one for the fine grid, one for the coarse grid and one for the reference grid.
+"""
+struct Triplet{T}
+    coarse::T
+    fine::T
+    reference::T
+end
+
+Grid = Vector{Float64}
+Volume = Matrix{Float64}
+InnerProduct = Function
+Integrator = Function
+
+struct DomainDescriptors
+    b::Float64
+    interpolation_matrix::SparseMatrixCSC{Float64,Int}
+    N::Int
+    I::Int
+    J::Int
+    W::SparseMatrixCSC{Float64,Int}
+    R::SparseMatrixCSC{Float64,Int}
+    grids::Triplet{Grid}
+    volumes::Triplet{Volume}
+    inner_products::Triplet{InnerProduct}
+    integrators::Triplet{Integrator}
+end
+
 function gen_stencil(N, coeffs, positions)
     mat = spzeros((N, N))
     stencil_width = size(coeffs)[1]
@@ -56,6 +84,9 @@ function generate_domain_and_filters(b, I, N; spectral = false)
     ref_x = ref_x .+ 1 / 2 * ref_dx
     ref_omega = Diagonal(ref_dx * ones(size(ref_x)[1]))
 
+    grids = Triplet{Grid}(X, x, ref_x)
+    volumes = Triplet{Volume}(Omega, omega, ref_omega)
+
     interpolation_matrix = construct_weighted_interpolation_matrix(ref_x, x)
 
     mapper = dx * ones((J, size(X)[1]))
@@ -65,24 +96,32 @@ function generate_domain_and_filters(b, I, N; spectral = false)
     IP(a, b, omega = Omega) = inner_product(a, b, omega)
     ip(a, b, omega = omega) = inner_product(a, b, omega)
     ref_ip(a, b, omega = ref_omega) = inner_product(a, b, omega)
+    inner_products = Triplet{InnerProduct}(IP, ip, ref_ip)
 
     INTEG(a) = IP(a, ones(size(a)))
     integ(a) = ip(a, ones(size(a)))
     ref_integ(a) = ref_ip(a, ones(size(a)))
+    integrators = Triplet{Integrator}(INTEG, integ, ref_integ)
+
     if spectral
         W, R = spectral_filter(X, x, domain_range)
     else
         W, R = gen_W(mapper), gen_R(mapper)
     end
-    domain_descriptors = b,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ)
-    return domain_descriptors
+
+    DomainDescriptors(
+        b,
+        interpolation_matrix,
+        N,
+        I,
+        J,
+        W,
+        R,
+        grids,
+        volumes,
+        inner_products,
+        integrators,
+    )
 end
 
 function fourier_basis(x, domain_range)
@@ -207,31 +246,28 @@ function gen_fourier(
 end
 
 function process_HR_solution(us, dus, ts, domain_descriptors, f, return_primes = false)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
-    Es = (1 / 2) * ref_ip(us, us)
-    dEs = ref_ip(us, dus)
+    ips = domain_descriptors.inner_products
+    Es = (1 / 2) * ips.reference(us, us)
+    dEs = ips.reference(us, dus)
 
+    interpolation_matrix = domain_descriptors.interpolation_matrix
     us = interpolation_matrix * us
     dus = interpolation_matrix * dus
 
+    W = domain_descriptors.W
+    X = domain_descriptors.grids.coarse
     us_bar = W * us
     phys_dus = f(us_bar, X, ts)
     dus_bar = W * dus
 
-    Es_bar = (1 / 2) * IP(us_bar, us_bar)
+    Es_bar = (1 / 2) * ips.coarse(us_bar, us_bar)
     Es_prime = Es .- Es_bar
 
-    dEs_bar = IP(us_bar, dus_bar)
+    dEs_bar = ips.coarse(us_bar, dus_bar)
     dEs_prime = dEs .- dEs_bar
 
     if return_primes
+        R = domain_descriptors.R
         HR_us_bar = R * us_bar
         HR_us_prime = us .- HR_us_bar
 
@@ -449,16 +485,10 @@ function gen_rand_condition(
     scaling = 1,
     in_outflow = false,
 )
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
-
     b(t) = NaN * t
+
+    domain_range = domain_descriptors.b
+    ref_x = domain_descriptors.grids.reference
 
     if in_outflow
         a = gen_fourier(2 * pi, min_mode, max_mode, offset = offset, scaling = scaling)
