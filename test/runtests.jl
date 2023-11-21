@@ -1,6 +1,8 @@
-using ECNCM_1D
 using Test
+using LinearAlgebra
+using Random
+using ECNCM_1D
 
 @testset "ECNCM_1D.jl" begin
-    # Write your tests here.
+    include("discretizations.jl")
 end
