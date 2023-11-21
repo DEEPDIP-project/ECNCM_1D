@@ -56,9 +56,7 @@ function sp_mat_mul(quantity, stencil)
     select_mat = stop_gradient() do
         gen_select_mat(quantity, stencil_width)[:, stencil_width+1:end-stencil_width]
     end
-    return vcat(
-        [stencil' * quantity[select_mat[:, i], :] for i = 1:size(select_mat)[2]]...,
-    )
+    return vcat([stencil' * quantity[select_mat[:, i], :] for i = 1:size(select_mat)[2]]...)
 end
 
 function init_stencil(stencil_width, coeff = 0.4)
