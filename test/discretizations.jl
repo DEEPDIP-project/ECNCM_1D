@@ -8,17 +8,16 @@
     @testset "Domain descriptors" begin
         domain_descriptors = generate_domain_and_filters(b, II, N)
 
-        domain_range,
-        interpolation_matrix,
-        (N, II, J),
-        (X, x, ref_x),
-        (Omega, omega),
-        (W, R),
-        (IP, ip, ref_ip),
-        (INTEG, integ, ref_integ) = domain_descriptors
+        W = domain_descriptors.W
+        R = domain_descriptors.R
+        II = domain_descriptors.I
+        N = domain_descriptors.N
 
         @test size(W) == (II, N)
         @test size(R) == (N, II)
+
+        Omega = domain_descriptors.volumes.coarse
+        omega = domain_descriptors.volumes.fine
         @test size(Omega) == (II, II)
         @test size(omega) == (N, N)
 
@@ -34,6 +33,8 @@
         # filtered
         u_bar = W * u
         v_bar = W * v
+        IP = domain_descriptors.inner_products.coarse
+        ip = domain_descriptors.inner_products.fine
         # Eq. (A.1) (with a and b in the paper replaced by u and v here)
         @test ip(R * u_bar, R * v_bar) ≈ IP(u_bar, v_bar)
 

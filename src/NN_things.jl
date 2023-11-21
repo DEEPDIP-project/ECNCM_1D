@@ -218,9 +218,6 @@ function skew_symm_NN(
     diagonals;
     channel,
 )
-
-    #domain_range,(I,J),(X,x),(Omega,omega),(W,R),(IP,ip),(INTEG,integ) = domain_descriptors
-
     (physics_width, stencil_width, conv_pad_size) = pad_sizes
 
     if constraints
@@ -364,18 +361,11 @@ function loss_function(
     model;
     subgrid_loss = true,
 )
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
-
     #us,dus,ss,dss,as,bs = stop_gradient() do
     #    [hcat([k[:,i,j] for i in 1:size(k)[2] for j in 1:size(k)[3]]...)  for k in (us,dus,ss,dss,as,bs)]
     #end
+
+    X = domain_descriptors.grids.coarse
 
     pred_dus, pred_dss = model(us, ss, X, as, bs)
 
@@ -411,15 +401,6 @@ function trajectory_loss_function(
     T;
     subgrid_loss = true,
 )
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
-
     traj_us, traj_ss = stop_gradient() do
         [hcat([k[:, i, j] for i = 1:size(k)[2] for j = 1:size(k)[3]]...) for k in (us, ss)]
     end
@@ -428,6 +409,8 @@ function trajectory_loss_function(
     BC_bs(t, bs = bs, traj_dt = traj_dt) = interpolate_unsteady_BCs(t, bs, traj_dt)
 
     current_f = model_wrapper(model, as = BC_as, bs = BC_bs, eval_BCs = true)
+
+    X = domain_descriptors.grids.coarse
 
     init_cond = [us[:, 1, :]; ss[:, 1, :]]
     NN_var, NN_dus, NN_ts = simulation(
@@ -567,14 +550,8 @@ function padding(vec, pad_size, a = 0, b = 0; anti_symm_outflow = false)
 end
 
 function subgrid_gradients(u_prime, du_prime, domain_descriptors, subgrid_filter)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
+    I = domain_descriptors.I
+    J = domain_descriptors.J
     function extract_jacobian(u_prime, subgrid_filter = subgrid_filter, I = I, J = J)
         jac = jacobian(subgrid_filter, u_prime)[1]
         flat_jac = zeros(I * J)
@@ -587,6 +564,7 @@ function subgrid_gradients(u_prime, du_prime, domain_descriptors, subgrid_filter
     end
     full_jac = zeros(I, size(u_prime)[2])
 
+    R = domain_descriptors.R
     for i = 1:size(u_prime)[2]
         full_jac[:, i] .+= R' * (extract_jacobian(u_prime[:, i]) .* du_prime[:, i])
     end
@@ -594,16 +572,9 @@ function subgrid_gradients(u_prime, du_prime, domain_descriptors, subgrid_filter
 end
 
 function gen_NN_subgrid_filter(layers, domain_descriptors, outflow = false)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
     NN = NeuralNetwork(layers, bias = false, activation_function = tanh)
     select_mat = gen_subgrid_filter_select_mat(domain_descriptors)
+    J = domain_descriptors.J
     Px = stop_gradient() do
         reverse(Matrix{Float64}(LinearAlgebra.I, J, J), dims = 2)
     end
@@ -615,15 +586,6 @@ function gen_NN_subgrid_filter(layers, domain_descriptors, outflow = false)
         Px = Px,
         outflow = outflow,
     )
-        domain_range,
-        interpolation_matrix,
-        (N, I, J),
-        (X, x, ref_x),
-        (Omega, omega, ref_omega),
-        (W, R),
-        (IP, ip, ref_ip),
-        (INTEG, integ, ref_integ) = domain_descriptors
-
         f1 = vcat([NN(u_primes[select_mat[:, i], :]) for i = 1:size(select_mat)[2]]...)
         f2 = vcat([NN(Px * u_primes[select_mat[:, i], :]) for i = 1:size(select_mat)[2]]...)
         filtered = f1 .- f2
@@ -680,27 +642,14 @@ function conv_NN(sizes, channels, strides = 0, bias = true)
 end
 
 function gen_subgrid_filter_select_mat(domain_descriptors)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
+    x = domain_descriptors.grids.fine
+    J = domain_descriptors.J
+    I = domain_descriptors.I
     selects = reshape(collect(1:size(x)[1]), (J, I))
     return selects
 end
 
 function gen_t_stencil(params, domain_descriptors, outflow)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
     if outflow
         lambda = 0.0
         t_tilde = params
@@ -721,14 +670,7 @@ function gen_t_stencil(params, domain_descriptors, outflow)
 end
 
 function gen_subgrid_filter(domain_descriptors, outflow = false)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
+    J = domain_descriptors.J
     params = zeros(J) .+ rand(Uniform(-10^(-20), 10^(-20)), J)
     select_mat = gen_subgrid_filter_select_mat(domain_descriptors)
     function subgrid_filter(
@@ -748,14 +690,7 @@ end
 #bar = gen_S_and_K(subgrid_filter_stencil,"just_avg")
 
 function subgrid_filter_loss(u_primes, subgrid_filter, domain_descriptors)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
+    W = domain_descriptors.W
 
     filtered = subgrid_filter(u_primes)
     filtered_squared = 1 / 2 * (filtered) .^ 2
@@ -767,14 +702,8 @@ function subgrid_filter_loss(u_primes, subgrid_filter, domain_descriptors)
 end
 
 function gen_T(subgrid_filter_stencil, domain_descriptors)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
+    I = domain_descriptors.I
+    J = domain_descriptors.J
     dimensions = (I, I * J)
     mat = spzeros(dimensions)
     for i = 1:I
@@ -784,14 +713,6 @@ function gen_T(subgrid_filter_stencil, domain_descriptors)
 end
 
 function gen_train_test_set(d, f, domain_descriptors, fraction, train_fraction)
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
     us, dus, ts, as, bs, Fs = d
     ending_index = Int(floor(train_fraction * size(us)[2]))
 
@@ -851,20 +772,13 @@ function gen_trajectory_data(
     traj_steps,
     T_mat,
 )
-    domain_range,
-    interpolation_matrix,
-    (N, I, J),
-    (X, x, ref_x),
-    (Omega, omega, ref_omega),
-    (W, R),
-    (IP, ip, ref_ip),
-    (INTEG, integ, ref_integ) = domain_descriptors
-
     traj_fraction = 1 / traj_steps
 
     us, dus, ts, as, bs, Fs = d
 
     traj_indexes = cut_indexes(indexes, traj_fraction, randomize = false, uniform = false)
+
+    I = domain_descriptors.I
 
     traj_data = Dict()
     traj_data["u_bar"] = Array{Float64}(undef, I, traj_steps + 1, 0)
@@ -905,6 +819,9 @@ function gen_trajectory_data(
     trajectory_data["b"] = reshape(bs[:, trajs], (1, traj_steps + 1, data_size))
 
     #### Process F ########
+    W = domain_descriptors.W
+    R = domain_descriptors.R
+    interpolation_matrix = domain_descriptors.interpolation_matrix
     F_bar = W * interpolation_matrix * Fs[:, trajs]
     F_prime = T_mat * (interpolation_matrix * Fs[:, trajs] .- R * F_bar)
 
