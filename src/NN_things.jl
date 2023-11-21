@@ -1,6 +1,5 @@
 using LinearAlgebra
 using Flux
-include("methods.jl")
 
 using Random
 using Zygote
